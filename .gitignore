@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+
+# Environment files (secrets!)
+.env
+.env.local
+.env.*.local
+
+# OpenClaw runtime data (auto-generated, not source)
+openclaw_config/
+openclaw_workspace/
+
+# Docker volumes
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
