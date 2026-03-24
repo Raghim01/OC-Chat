@@ -1,5 +1,5 @@
 # Unified Docker Compose
-version: '3.8'
+version: "3.8"
 
 services:
   # ---------------------------------------------------------------------
@@ -19,6 +19,12 @@ services:
       - ./openclaw_workspace:/home/node/openclaw/workspace
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   # ---------------------------------------------------------------------
   # 2. Backend Service
@@ -39,7 +45,8 @@ services:
       # Prevent local mount from overriding container's node_modules
       - /app/node_modules
     depends_on:
-      - openclaw-gateway
+      openclaw-gateway:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------
   # 3. Frontend Service

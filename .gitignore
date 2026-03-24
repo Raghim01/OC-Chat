@@ -25,3 +25,6 @@ openclaw_workspace/
 # OS
 .DS_Store
 Thumbs.db
+
+#MD Files
+*.md
