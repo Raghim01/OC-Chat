@@ -5,15 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import WebSocket from 'ws';
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  KeyObject,
-  randomUUID,
-  sign,
-} from 'crypto';
+import { KeyObject, randomUUID } from 'crypto';
 import {
   ChallengeEventFrame,
   ChallengePayload,
@@ -21,74 +13,35 @@ import {
   ChatRequest,
   ConnectRequest,
   GatewayFrame,
-  GatewayScope,
   HelloOkPayload,
-  PROTOCOL_VERSION,
   ResFrame,
 } from './interfaces/ws.interfaces';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { deriveKeyPair, deriveDeviceId } from './utils/crypto';
+import { buildConnectRequest } from './utils/auth';
 
 const execAsync = promisify(exec);
-// ─── Persisted identity ───────────────────────────────────────────────────────
-
-interface PersistedIdentity {
-  privateKeyPem: string;
-  publicKeyPem: string;
-}
-
-// ─── Public API ──────────────────────────────────────────────────────────────
-
-export type MessageHandler = (event: string, frame: GatewayFrame) => void;
-
-// ─── Service ─────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OpenClawService.name);
   private readonly keyPair: { privateKey: KeyObject; publicKey: KeyObject };
   private readonly deviceId: string;
-  private readonly rawPubKey: Buffer;
-  private deviceToken: string | null = null;
   private ws: WebSocket | null = null;
   private authenticated = false;
   private destroyed = false;
-  private readonly messageHandlers: MessageHandler[] = [];
   private readonly sessions = new Map<string, (data: object) => void>();
 
   constructor() {
-    this.keyPair = this.deriveKeyPair();
-    const jwk = this.keyPair.publicKey.export({ format: 'jwk' }) as {
-      x: string;
-    };
-    this.rawPubKey = Buffer.from(jwk.x, 'base64url');
-    this.deviceId = createHash('sha256').update(this.rawPubKey).digest('hex');
-  }
-
-  // ── Identity ───────────────────────────────────────────────────────────────
-
-  private deriveKeyPair(): { privateKey: KeyObject; publicKey: KeyObject } {
     const secret = process.env.DEVICE_SECRET;
     if (!secret) {
       this.logger.warn(
         'DEVICE_SECRET is not set — device identity will change on every restart',
       );
-      return generateKeyPairSync('ed25519');
     }
-
-    // Derive a stable 32-byte seed from the secret, wrap it in a PKCS#8 DER
-    // envelope (fixed 16-byte header for Ed25519), then import as a private key.
-    const seed = createHash('sha256').update(secret).digest();
-    const der = Buffer.concat([
-      Buffer.from('302e020100300506032b657004220420', 'hex'),
-      seed,
-    ]);
-    const privateKey = createPrivateKey({
-      key: der,
-      format: 'der',
-      type: 'pkcs8',
-    });
-    return { privateKey, publicKey: createPublicKey(privateKey) };
+    this.keyPair = deriveKeyPair(secret);
+    this.deviceId = deriveDeviceId(this.keyPair.publicKey);
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -143,35 +96,46 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `OpenClaw WS closed [${code}]: ${reason.toString() || '(no reason)'}`,
       );
+      this.emitToAllSessions({ status: 'connecting' });
     });
 
     this.ws.on('error', (err) => {
       this.logger.error(`OpenClaw WS error: ${err.message}`);
-      // 'error' is always followed by 'close', so reconnect is handled there
     });
   }
+
   // ── Frame handling ─────────────────────────────────────────────────────────
 
   private handleFrame(frame: GatewayFrame): void {
     if (
-      frame.type === 'event' &&
+      frame.type === 'res' ||
       (frame as ChallengeEventFrame).event === 'connect.challenge'
     ) {
+      this.handleConnectionFrame(frame);
+    } else if ((frame as ChatEventFrame).event === 'chat') {
+      this.handleChatFrame(frame as ChatEventFrame);
+    }
+  }
+
+  private handleConnectionFrame(frame: GatewayFrame): void {
+    if ((frame as ChallengeEventFrame).event === 'connect.challenge') {
       this.handleChallenge((frame as ChallengeEventFrame).payload);
       return;
     }
 
-    if (frame.type === 'res' && (frame as ResFrame).ok === true) {
+    if ((frame as ResFrame).ok === true) {
       const payload = (frame as ResFrame<HelloOkPayload>).payload;
       if (payload?.type === 'hello-ok') {
         this.authenticated = true;
         this.logger.log(
           `OpenClaw authenticated (protocol v${payload.protocol})`,
         );
+        this.emitToAllSessions({ status: 'connected' });
       }
+      return;
     }
 
-    if (frame.type === 'res' && (frame as ResFrame).ok === false) {
+    if ((frame as ResFrame).ok === false) {
       const errFrame = frame as ResFrame;
       if (
         errFrame.error?.code === 'NOT_PAIRED' ||
@@ -185,23 +149,27 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
             'Pairing required but no requestId in error details',
           );
         }
-        return;
       }
     }
+  }
 
-    const eventName =
-      frame.type === 'event'
-        ? (frame as ChallengeEventFrame).event
-        : frame.type;
+  private handleChatFrame(frame: ChatEventFrame): void {
+    const content = frame.payload?.message?.content?.[0]?.text ?? '';
+    const isFinal =
+      frame.payload?.final === true || frame.payload?.state === 'final';
 
-    for (const handler of this.messageHandlers) {
-      handler(eventName, frame);
+    this.logger.log(`[stream] chunk="${content}" final=${isFinal}`);
+    this.emitToAllSessions({ content, final: isFinal });
+  }
+
+  private emitToAllSessions(data: object): void {
+    for (const emit of this.sessions.values()) {
+      emit(data);
     }
   }
 
   private handleChallenge(payload: ChallengePayload): void {
     const { nonce } = payload;
-
     if (!nonce) {
       this.logger.error(
         'connect.challenge received without nonce — cannot authenticate',
@@ -210,16 +178,18 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log(`Received challenge nonce: ${nonce}`);
-
-    const connectReq = this.buildConnectRequest(nonce);
-
-    this.sendRaw(connectReq);
+    this.sendRaw(
+      buildConnectRequest({
+        deviceId: this.deviceId,
+        keyPair: this.keyPair,
+        nonce,
+      }),
+    );
     this.logger.log('Sent connect request');
   }
 
   private async approveAndReconnect(requestId: string): Promise<void> {
     this.logger.log(`Pairing required — approving device request ${requestId}`);
-
     try {
       await this.approveDevice(requestId);
       this.logger.log('Device approved — reconnecting');
@@ -228,50 +198,37 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // The gateway closes the WS after NOT_PAIRED; wait for it to settle
-    // before opening a new connection.
     await new Promise<void>((resolve) => setTimeout(resolve, 1000));
-
-    if (!this.destroyed) {
-      this.connect();
-    }
+    if (!this.destroyed) this.connect();
   }
 
   private async approveDevice(requestId: string): Promise<string> {
     const container = process.env.OPENCLAW_CONTAINER ?? 'openclaw-gateway';
-
     const { stdout } = await execAsync(
       `docker exec ${container} openclaw devices approve ${requestId}`,
     );
-
     return stdout;
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Internal send ──────────────────────────────────────────────────────────
 
-  /** Send a typed frame to OpenClaw. Requires active authentication. */
-  send(frame: GatewayFrame): void {
+  private send(frame: GatewayFrame): void {
     if (!this.authenticated) {
       this.logger.error('Cannot send — not yet authenticated with OpenClaw');
       return;
     }
-
     this.sendRaw(frame);
   }
 
-  /** Send without the auth guard — used internally for the handshake. */
   private sendRaw(frame: GatewayFrame | ConnectRequest): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.logger.error('Cannot send — OpenClaw WS is not open');
       return;
     }
-
     this.ws.send(JSON.stringify(frame));
   }
 
-  isAuthenticated(): boolean {
-    return this.authenticated;
-  }
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   getStatus(): { connected: boolean; url: string | undefined } {
     return {
@@ -283,93 +240,18 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   registerSession(sessionId: string, emit: (data: object) => void): () => void {
     this.sessions.set(sessionId, emit);
     this.logger.log(`[session] registered sessionId=${sessionId}`);
+    emit({ status: this.authenticated ? 'connected' : 'connecting' });
     return () => {
       this.sessions.delete(sessionId);
       this.logger.log(`[session] unregistered sessionId=${sessionId}`);
     };
   }
 
-  sendMessage(message: string, timeoutMs = 30_000): Promise<string> {
-    return new Promise((resolve, reject) => {
-      let accumulated = '';
-
-      const cleanup = () => {
-        const idx = this.messageHandlers.indexOf(handler);
-        if (idx !== -1) this.messageHandlers.splice(idx, 1);
-      };
-
-      const timer = setTimeout(() => {
-        cleanup();
-        // reject(new Error('OpenClaw response timed out'));
-      }, timeoutMs);
-
-      const handler: MessageHandler = (event, frame) => {
-        if (event !== 'chat') return;
-
-        const { payload } = frame as ChatEventFrame;
-        accumulated += payload.content ?? '';
-
-        if (payload.final) {
-          clearTimeout(timer);
-          cleanup();
-          resolve(accumulated);
-        }
-      };
-
-      this.messageHandlers.push(handler);
-
-      const req: ChatRequest = {
-        type: 'req',
-        id: randomUUID(),
-        method: 'chat.send',
-        params: {
-          message,
-          sessionKey: 'agent:aizasybfnu_7lyogd9ffeely8xugushbskquyi:id',
-          idempotencyKey: randomUUID(),
-        },
-      };
-
-      this.send(req);
-    });
-  }
-
-  sendMessageStream(
-    message: string,
-    sessionId: string,
-    timeoutMs = 30_000,
-  ): boolean {
-    const emit = this.sessions.get(sessionId);
-    if (!emit) {
+  sendMessageStream(message: string, sessionId: string): boolean {
+    if (!this.sessions.has(sessionId)) {
       this.logger.error(`[stream] no session for sessionId=${sessionId}`);
       return false;
     }
-
-    const cleanup = () => {
-      const idx = this.messageHandlers.indexOf(handler);
-      if (idx !== -1) this.messageHandlers.splice(idx, 1);
-      clearTimeout(timer);
-    };
-
-    const timer = setTimeout(() => {
-      cleanup();
-      emit({ error: 'OpenClaw response timed out', final: true });
-    }, timeoutMs);
-
-    const handler: MessageHandler = (event, frame) => {
-      if (event !== 'chat') return;
-
-      const payload = (frame as ChatEventFrame).payload;
-      const content = payload?.message?.content?.[0]?.text ?? '';
-      const isFinal = payload?.final === true || payload?.state === 'final';
-
-      this.logger.log(`[stream] chunk="${content}" final=${isFinal}`);
-
-      emit({ content, final: isFinal });
-
-      if (isFinal) cleanup();
-    };
-
-    this.messageHandlers.push(handler);
 
     const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
       '',
@@ -391,77 +273,4 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     this.send(req);
     return true;
   }
-
-  private buildConnectRequest(nonce: string): ConnectRequest {
-    const spki = this.keyPair.publicKey.export({
-      format: 'der',
-      type: 'spki',
-    }) as Buffer;
-
-    const rawKey = Buffer.from(spki.subarray(spki.length - 32));
-    const publicKey = toBase64Url(rawKey);
-
-    const signedAt = Date.now();
-    const token = process.env.AUTH_TOKEN ?? '';
-    const clientId = 'cli';
-    const clientMode = 'cli';
-    const role = 'operator';
-    const scopes = 'operator.read,operator.write,operator.admin';
-    const platform = 'node';
-    const deviceFamily = 'server';
-
-    // v3 payload: adds platform and deviceFamily after nonce
-    const payload = [
-      'v3',
-      this.deviceId,
-      clientId,
-      clientMode,
-      role,
-      scopes,
-      signedAt,
-      token,
-      nonce,
-      platform,
-      deviceFamily,
-    ].join('|');
-
-    const signature = toBase64Url(
-      sign(null, Buffer.from(payload, 'utf-8'), this.keyPair.privateKey),
-    );
-
-    return {
-      type: 'req',
-      id: randomUUID(),
-      method: 'connect',
-      params: {
-        minProtocol: PROTOCOL_VERSION,
-        maxProtocol: PROTOCOL_VERSION,
-        client: {
-          id: clientId,
-          version: 'dev',
-          platform,
-          mode: clientMode,
-          deviceFamily,
-        },
-        role,
-        scopes: scopes.split(',') as GatewayScope[],
-        auth: { token },
-        device: {
-          id: this.deviceId,
-          publicKey,
-          signature,
-          signedAt,
-          nonce,
-        },
-      },
-    };
-  }
-}
-
-function toBase64Url(buffer: Buffer): string {
-  return buffer
-    .toString('base64')
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
 }
