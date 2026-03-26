@@ -12,7 +12,8 @@ build/
 .env.*.local
 
 # OpenClaw runtime data (auto-generated, not source)
-openclaw_config/
+openclaw_config/*
+!openclaw_config/openclaw.json
 openclaw_workspace/
 
 # Docker volumes
