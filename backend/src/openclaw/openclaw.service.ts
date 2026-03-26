@@ -18,11 +18,11 @@ import {
   HelloOkPayload,
   HistoryMessage,
   ResFrame,
-} from './interfaces/ws.interfaces';
+} from '../interfaces/ws.interfaces';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { deriveKeyPair, deriveDeviceId } from './utils/crypto';
-import { buildConnectRequest } from './utils/auth';
+import { deriveKeyPair, deriveDeviceId } from '../utils/crypto';
+import { buildConnectRequest } from '../utils/auth';
 
 const execAsync = promisify(exec);
 
@@ -65,11 +65,7 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   // ── Connection ─────────────────────────────────────────────────────────────
 
   private connect(): void {
-    const url = process.env.OPENCLAW_WS_URL;
-    if (!url) {
-      this.logger.error('OPENCLAW_WS_URL is not set — connection skipped');
-      return;
-    }
+    const url = process.env.OPENCLAW_WS_URL || 'ws://openclaw-gateway:18789';
 
     this.ws = new WebSocket(url);
 
@@ -118,8 +114,10 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       this.handleConnectionFrame(frame);
     } else if (frame.type === 'event') {
       const eventName = (frame as { event: string }).event;
+
       if (eventName === 'connect.challenge') this.handleConnectionFrame(frame);
-      else if (eventName === 'chat') this.handleChatFrame(frame as unknown as ChatEventFrame);
+      else if (eventName === 'chat')
+        this.handleChatFrame(frame as unknown as ChatEventFrame);
     }
   }
 
@@ -228,39 +226,12 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     return stdout;
   }
 
-  // ── Internal send ──────────────────────────────────────────────────────────
-
-  private send(frame: GatewayFrame): void {
-    if (!this.authenticated) {
-      this.logger.error('Cannot send — not yet authenticated with OpenClaw');
-      return;
-    }
-    this.sendRaw(frame);
-  }
-
-  private sendRaw(frame: GatewayFrame | ConnectRequest): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.error('Cannot send — OpenClaw WS is not open');
-      return;
-    }
-    this.ws.send(JSON.stringify(frame));
-  }
-
-  private getSessionKey(): string {
-    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
-      '',
-      'main',
-      'assistant',
-    ];
-    return `agent:${agentData[1]}:${agentData[2]}`;
-  }
-
   // ── Public API ─────────────────────────────────────────────────────────────
 
   getStatus(): { connected: boolean; url: string | undefined } {
     return {
       connected: this.authenticated,
-      url: process.env.OPENCLAW_WS_URL,
+      url: process.env.OPENCLAW_WS_URL || 'ws://openclaw-gateway:18789',
     };
   }
 
@@ -295,7 +266,7 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
-  getHistory(limit = 50): Promise<HistoryMessage[]> {
+  async getHistory(limit = 50): Promise<HistoryMessage[]> {
     return new Promise((resolve) => {
       const id = randomUUID();
       this.pendingRequests.set(id, resolve);
@@ -308,5 +279,32 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       };
       this.send(req);
     });
+  }
+
+  // ── Internal send ──────────────────────────────────────────────────────────
+
+  private send(frame: GatewayFrame): void {
+    if (!this.authenticated) {
+      this.logger.error('Cannot send — not yet authenticated with OpenClaw');
+      return;
+    }
+    this.sendRaw(frame);
+  }
+
+  private sendRaw(frame: GatewayFrame | ConnectRequest): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.logger.error('Cannot send — OpenClaw WS is not open');
+      return;
+    }
+    this.ws.send(JSON.stringify(frame));
+  }
+
+  private getSessionKey(): string {
+    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
+      '',
+      'main',
+      'assistant',
+    ];
+    return `agent:${agentData[1]}:${agentData[2]}`;
   }
 }

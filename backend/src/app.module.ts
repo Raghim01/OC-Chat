@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { OpenClawService } from './openclaw.service';
+import { OpenClawController } from './openclaw/openclaw.controller';
+import { OpenClawService } from './openclaw/openclaw.service';
 
 @Module({
   imports: [],
-  controllers: [AppController],
+  controllers: [OpenClawController],
   providers: [OpenClawService],
 })
 export class AppModule {}

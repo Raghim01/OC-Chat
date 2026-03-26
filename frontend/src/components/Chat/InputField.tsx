@@ -10,7 +10,6 @@ export function ChatInputField({ onSendMessage, disabled }: ChatInputFieldProps)
     const [input, setInput] = useState<string>('');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    // Auto-resize textarea
     useEffect(() => {
         const el = textareaRef.current;
         if (!el) return;

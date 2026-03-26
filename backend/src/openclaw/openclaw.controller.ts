@@ -12,16 +12,14 @@ import {
 import type { MessageEvent } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OpenClawService } from './openclaw.service';
-import type { HistoryMessage } from './interfaces/ws.interfaces';
-
-interface ChatRequestBody {
-  message: string;
-  sessionId: string;
-}
+import type {
+  ChatRequestBody,
+  HistoryMessage,
+} from '../interfaces/ws.interfaces';
 
 @Controller()
-export class AppController {
-  private readonly logger = new Logger(AppController.name);
+export class OpenClawController {
+  private readonly logger = new Logger(OpenClawController.name);
 
   constructor(private readonly openClawService: OpenClawService) {}
 
@@ -38,6 +36,7 @@ export class AppController {
       const cleanup = this.openClawService.registerSession(sessionId, (data) =>
         subscriber.next({ data }),
       );
+
       this.logger.log(`[session] opened sessionId=${sessionId}`);
 
       return () => {
@@ -59,8 +58,10 @@ export class AppController {
       body.message,
       body.sessionId,
     );
+
     if (!dispatched)
       throw new NotFoundException('Session not found — open the stream first');
+
     return { ok: true };
   }
 }

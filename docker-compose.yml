@@ -19,7 +19,8 @@ services:
     env_file:
       - .env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${OPENCLAW_PORT:-18789}/health"]
+      test:
+        ["CMD", "curl", "-f", "http://localhost:${OPENCLAW_PORT:-18789}/health"]
       interval: 5s
       timeout: 3s
       retries: 10

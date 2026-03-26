@@ -122,3 +122,8 @@ export interface ChatHistoryRequest {
   method: 'chat.history';
   params: { sessionKey: string; limit: number };
 }
+
+export interface ChatRequestBody {
+  message: string;
+  sessionId: string;
+}

@@ -17,7 +17,9 @@ export interface StreamChunk {
  *  Slices off the already-displayed prefix so callers receive only the delta. */
 function toDelta(content: string, prevText: string): string {
   if (!content) return "";
-  return content.startsWith(prevText) ? content.slice(prevText.length) : content;
+  return content.startsWith(prevText)
+    ? content.slice(prevText.length)
+    : content;
 }
 
 export function openSession(
@@ -67,10 +69,12 @@ interface RawHistoryMessage {
   timestamp: number;
 }
 
-export async function fetchHistory(): Promise<{ role: "sent" | "received"; content: string; timestamp: Date }[]> {
+export async function fetchHistory(): Promise<
+  { role: "sent" | "received"; content: string; timestamp: Date }[]
+> {
   const res = await fetch(`${import.meta.env.VITE_API_URL}/chat/history`);
   if (!res.ok) throw new Error(`History request failed: ${res.status}`);
-  const data = await res.json() as { messages: RawHistoryMessage[] };
+  const data = (await res.json()) as { messages: RawHistoryMessage[] };
   return data.messages.flatMap((m) => {
     const role = m.role === "user" ? "sent" : "received";
     const text = m.content
