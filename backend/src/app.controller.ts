@@ -12,6 +12,7 @@ import {
 import type { MessageEvent } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { OpenClawService } from './openclaw.service';
+import type { HistoryMessage } from './interfaces/ws.interfaces';
 
 interface ChatRequestBody {
   message: string;
@@ -44,6 +45,12 @@ export class AppController {
         this.logger.log(`[session] closed sessionId=${sessionId}`);
       };
     });
+  }
+
+  @Get('chat/history')
+  async getChatHistory(): Promise<{ messages: HistoryMessage[] }> {
+    const messages = await this.openClawService.getHistory();
+    return { messages };
   }
 
   @Post('chat')

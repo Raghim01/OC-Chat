@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { MessageBubble } from "./components/MessageBubble";
 import type { ChatMessage, ConnectionStatus } from "./types/chat";
 import { ChatInputField } from "./components/Chat/InputField";
-import { openSession, postChat } from "./api/chat";
+import { openSession, postChat, fetchHistory } from "./api/chat";
 import "./index.css";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -14,6 +14,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const bottomRef = useRef<HTMLDivElement>(null);
   const sessionId = useRef(crypto.randomUUID());
@@ -58,7 +59,23 @@ export default function App() {
           ),
         );
       },
-      (status) => setConnectionStatus(status),
+      (status) => {
+        setConnectionStatus(status);
+        if (status === "connected") {
+          fetchHistory()
+            .then((history) =>
+              setMessages(
+                history.map((m, i) => ({
+                  id: i,
+                  role: m.role,
+                  text: m.content,
+                  timestamp: m.timestamp,
+                })),
+              ),
+            )
+            .finally(() => setIsLoadingHistory(false));
+        }
+      },
       () => {
         const aiId = currentAiId.current;
         if (aiId === null) return;
@@ -114,15 +131,19 @@ export default function App() {
       </header>
 
       <main className="chat-messages">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} msg={msg} />
-        ))}
+        {isLoadingHistory ? (
+          <div className="history-loading">
+            <div className="typing-indicator"><span /><span /><span /></div>
+          </div>
+        ) : (
+          messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+        )}
         <div ref={bottomRef} />
       </main>
 
       <ChatInputField
         onSendMessage={handleSendMessage}
-        disabled={isStreaming || connectionStatus !== "connected"}
+        disabled={isStreaming || isLoadingHistory || connectionStatus !== "connected"}
       />
     </div>
   );

@@ -27,5 +27,7 @@ openclaw_workspace/
 .DS_Store
 Thumbs.db
 
+#Claude
+.claude
 #MD Files
 *.md

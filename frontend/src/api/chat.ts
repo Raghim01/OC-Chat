@@ -61,6 +61,27 @@ export function openSession(
   return () => source.close();
 }
 
+interface RawHistoryMessage {
+  role: "user" | "assistant";
+  content: { type: "text" | "thinking"; text?: string }[];
+  timestamp: number;
+}
+
+export async function fetchHistory(): Promise<{ role: "sent" | "received"; content: string; timestamp: Date }[]> {
+  const res = await fetch(`${import.meta.env.VITE_API_URL}/chat/history`);
+  if (!res.ok) throw new Error(`History request failed: ${res.status}`);
+  const data = await res.json() as { messages: RawHistoryMessage[] };
+  return data.messages.flatMap((m) => {
+    const role = m.role === "user" ? "sent" : "received";
+    const text = m.content
+      .filter((c) => c.type === "text")
+      .map((c) => c.text ?? "")
+      .join("");
+    if (!text) return [];
+    return [{ role, content: text, timestamp: new Date(m.timestamp) }];
+  });
+}
+
 export async function postChat(
   message: string,
   sessionId: string,

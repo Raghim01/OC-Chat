@@ -12,14 +12,14 @@ services:
       - OPENROUTER_MODEL=${OPENROUTER_MODEL}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     ports:
-      - "18789:18789"
+      - "${OPENCLAW_PORT:-18789}:18789"
     volumes:
       - ./openclaw_config:/home/node/.openclaw
       - ./openclaw_workspace:/home/node/openclaw/workspace
     env_file:
       - .env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${OPENCLAW_PORT:-18789}/health"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -35,7 +35,7 @@ services:
     container_name: backend-app
     restart: unless-stopped
     ports:
-      - "8000:8000" # Typically used for backend like Django/FastAPI/Node
+      - "${PORT:-8000}:${PORT:-8000}"
     env_file:
       - .env
     volumes:
@@ -52,7 +52,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "wget -qO- http://localhost:8000/health/openclaw || exit 1",
+          "wget -qO- http://localhost:${PORT:-8000}/health/openclaw || exit 1",
         ]
       interval: 5s
       timeout: 3s
@@ -69,7 +69,7 @@ services:
     container_name: frontend-app
     restart: unless-stopped
     ports:
-      - "3000:3000" # Typically used for React/Vue/NextJS
+      - "${FRONTEND_PORT:-3000}:3000"
     env_file:
       - .env
     volumes:

@@ -277,6 +277,13 @@ body {
   margin-top: 10px;
 }
 
+/* ===== History Loading ===== */
+.history-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
 /* ===== Typing Indicator ===== */
 .typing-indicator {
   display: flex;

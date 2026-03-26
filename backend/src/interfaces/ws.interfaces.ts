@@ -154,12 +154,39 @@ export interface ChatRequestParams {
 
 export type ChatRequest = ReqFrame<'chat', ChatRequestParams>;
 
+// ─── Chat history ─────────────────────────────────────────────────────────────
+
+export interface ChatHistoryParams {
+  sessionKey: string;
+  limit: number;
+}
+
+export interface HistoryContentItem {
+  type: 'text' | 'thinking';
+  text?: string;
+  thinking?: string;
+}
+
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  content: HistoryContentItem[];
+  timestamp: number;
+  senderLabel?: string;
+}
+
+export interface ChatHistoryPayload {
+  messages: HistoryMessage[];
+}
+
+export type ChatHistoryRequest = ReqFrame<'chat.history', ChatHistoryParams>;
+
 // ─── Union of all inbound frames ─────────────────────────────────────────────
 
 export type GatewayFrame =
   | ChallengeEventFrame
   | ChatEventFrame
   | ChatRequest
+  | ChatHistoryRequest
   | ConnectResponse
   | EventFrame
   | ResFrame;

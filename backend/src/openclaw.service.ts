@@ -10,10 +10,13 @@ import {
   ChallengeEventFrame,
   ChallengePayload,
   ChatEventFrame,
+  ChatHistoryPayload,
+  ChatHistoryRequest,
   ChatRequest,
   ConnectRequest,
   GatewayFrame,
   HelloOkPayload,
+  HistoryMessage,
   ResFrame,
 } from './interfaces/ws.interfaces';
 import { exec } from 'child_process';
@@ -32,6 +35,10 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   private authenticated = false;
   private destroyed = false;
   private readonly sessions = new Map<string, (data: object) => void>();
+  private readonly pendingRequests = new Map<
+    string,
+    (data: HistoryMessage[]) => void
+  >();
 
   constructor() {
     const secret = process.env.DEVICE_SECRET;
@@ -124,14 +131,26 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     }
 
     if ((frame as ResFrame).ok === true) {
-      const payload = (frame as ResFrame<HelloOkPayload>).payload;
-      if (payload?.type === 'hello-ok') {
+      const payload = (frame as ResFrame).payload;
+
+      const helloOk = payload as unknown as HelloOkPayload;
+      if (helloOk?.type === 'hello-ok') {
         this.authenticated = true;
         this.logger.log(
-          `OpenClaw authenticated (protocol v${payload.protocol})`,
+          `OpenClaw authenticated (protocol v${helloOk.protocol})`,
         );
         this.emitToAllSessions({ status: 'connected' });
+        return;
       }
+
+      const res = frame as ResFrame;
+      if (this.pendingRequests.has(res.id)) {
+        const resolve = this.pendingRequests.get(res.id)!;
+        this.pendingRequests.delete(res.id);
+        resolve((res.payload as unknown as ChatHistoryPayload).messages);
+        return;
+      }
+
       return;
     }
 
@@ -228,6 +247,15 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     this.ws.send(JSON.stringify(frame));
   }
 
+  private getSessionKey(): string {
+    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
+      '',
+      'main',
+      'assistant',
+    ];
+    return `agent:${agentData[1]}:${agentData[2]}`;
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   getStatus(): { connected: boolean; url: string | undefined } {
@@ -253,24 +281,33 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
-      '',
-      'main',
-      'assistant',
-    ];
-
     const req: ChatRequest = {
       type: 'req',
       id: randomUUID(),
       method: 'chat.send',
       params: {
         message,
-        sessionKey: `agent:${agentData[1]}:${agentData[2]}`,
+        sessionKey: this.getSessionKey(),
         idempotencyKey: randomUUID(),
       },
     };
 
     this.send(req);
     return true;
+  }
+
+  getHistory(limit = 50): Promise<HistoryMessage[]> {
+    return new Promise((resolve) => {
+      const id = randomUUID();
+      this.pendingRequests.set(id, resolve);
+
+      const req: ChatHistoryRequest = {
+        type: 'req',
+        id,
+        method: 'chat.history',
+        params: { sessionKey: this.getSessionKey(), limit },
+      };
+      this.send(req);
+    });
   }
 }
