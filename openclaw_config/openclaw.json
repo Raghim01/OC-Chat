@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.13",
+    "lastTouchedAt": "2026-03-26T09:53:30.082Z"
+  },
+  "env": {
+    "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "${OPENROUTER_MODEL}"
+      },
+      "compaction": {
+        "mode": "safeguard"
+      }
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "lan",
+    "customBindHost": "0.0.0.0",
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789"
+      ]
+    },
+    "auth": {
+      "mode": "token",
+      "token": "${AUTH_TOKEN}"
+    },
+    "trustedProxies": [
+      "0.0.0.0/0"
+    ]
+  }
+}
