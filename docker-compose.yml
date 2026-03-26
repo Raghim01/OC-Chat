@@ -1,6 +1,4 @@
 # Unified Docker Compose
-version: "3.8"
-
 services:
   # ---------------------------------------------------------------------
   # 1. OpenClaw Service (Main Gateway)
@@ -10,8 +8,9 @@ services:
     container_name: openclaw-gateway
     restart: unless-stopped
     environment:
-      - AGENT_MODEL=${AGENT_MODEL}
       - AUTH_TOKEN=${AUTH_TOKEN}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     ports:
       - "18789:18789"
     volumes:
@@ -23,8 +22,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 5s
+      retries: 10
+      start_period: 10s
 
   # ---------------------------------------------------------------------
   # 2. Backend Service
@@ -44,9 +43,21 @@ services:
       - ./backend:/app
       # Prevent local mount from overriding container's node_modules
       - /app/node_modules
+      # Docker daemon socket — required for docker-cli to exec into sibling containers
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       openclaw-gateway:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:8000/health/openclaw || exit 1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
   # ---------------------------------------------------------------------
   # 3. Frontend Service
@@ -67,4 +78,5 @@ services:
       # Prevent local mount from overriding container's node_modules
       - /app/node_modules
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
