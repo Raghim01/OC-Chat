@@ -1,14 +1,27 @@
-import { Body, Controller, Get, Logger, Post, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Logger,
+  NotFoundException,
+  Post,
+  Query,
+  Sse,
+} from '@nestjs/common';
+import type { MessageEvent } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { OpenClawService } from './openclaw.service';
-import type { Response } from 'express';
 
 interface ChatRequestBody {
   message: string;
+  sessionId: string;
 }
 
 @Controller()
 export class AppController {
   private readonly logger = new Logger(AppController.name);
+
   constructor(private readonly openClawService: OpenClawService) {}
 
   @Get('health/openclaw')
@@ -16,28 +29,31 @@ export class AppController {
     return this.openClawService.getStatus();
   }
 
+  @Sse('chat/stream')
+  stream(@Query('sessionId') sessionId: string): Observable<MessageEvent> {
+    if (!sessionId) throw new BadRequestException('sessionId is required');
+
+    return new Observable((subscriber) => {
+      const cleanup = this.openClawService.registerSession(sessionId, (data) =>
+        subscriber.next({ data }),
+      );
+      this.logger.log(`[session] opened sessionId=${sessionId}`);
+
+      return () => {
+        cleanup();
+        this.logger.log(`[session] closed sessionId=${sessionId}`);
+      };
+    });
+  }
+
   @Post('chat')
-  async sendMessage(@Body() body: ChatRequestBody, @Res() res: Response) {
-    this.logger.log(`HTTP /chat request: "${body.message}"`);
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    try {
-      await this.openClawService.sendMessageStream(
-        body.message,
-        (content, final) => {
-          res.write(`data: ${JSON.stringify({ content, final })}\n\n`);
-        },
-      );
-    } catch (err) {
-      res.write(
-        `data: ${JSON.stringify({ error: (err as Error).message })}\n\n`,
-      );
-    }
-
-    res.end();
+  postChat(@Body() body: ChatRequestBody): { ok: boolean } {
+    const dispatched = this.openClawService.sendMessageStream(
+      body.message,
+      body.sessionId,
+    );
+    if (!dispatched)
+      throw new NotFoundException('Session not found — open the stream first');
+    return { ok: true };
   }
 }

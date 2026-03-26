@@ -54,6 +54,7 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   private authenticated = false;
   private destroyed = false;
   private readonly messageHandlers: MessageHandler[] = [];
+  private readonly sessions = new Map<string, (data: object) => void>();
 
   constructor() {
     this.keyPair = this.deriveKeyPair();
@@ -279,6 +280,15 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  registerSession(sessionId: string, emit: (data: object) => void): () => void {
+    this.sessions.set(sessionId, emit);
+    this.logger.log(`[session] registered sessionId=${sessionId}`);
+    return () => {
+      this.sessions.delete(sessionId);
+      this.logger.log(`[session] unregistered sessionId=${sessionId}`);
+    };
+  }
+
   sendMessage(message: string, timeoutMs = 30_000): Promise<string> {
     return new Promise((resolve, reject) => {
       let accumulated = '';
@@ -323,67 +333,63 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async sendMessageStream(
+  sendMessageStream(
     message: string,
-    onChunk: (content: string, final: boolean) => void,
+    sessionId: string,
     timeoutMs = 30_000,
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      let fullResponse = '';
+  ): boolean {
+    const emit = this.sessions.get(sessionId);
+    if (!emit) {
+      this.logger.error(`[stream] no session for sessionId=${sessionId}`);
+      return false;
+    }
 
-      const cleanup = () => {
-        const idx = this.messageHandlers.indexOf(handler);
-        if (idx !== -1) this.messageHandlers.splice(idx, 1);
-        clearTimeout(timer);
-      };
+    const cleanup = () => {
+      const idx = this.messageHandlers.indexOf(handler);
+      if (idx !== -1) this.messageHandlers.splice(idx, 1);
+      clearTimeout(timer);
+    };
 
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error('OpenClaw response timed out'));
-      }, timeoutMs);
+    const timer = setTimeout(() => {
+      cleanup();
+      emit({ error: 'OpenClaw response timed out', final: true });
+    }, timeoutMs);
 
-      const handler: MessageHandler = (event, frame) => {
-        if (event !== 'chat') return;
+    const handler: MessageHandler = (event, frame) => {
+      if (event !== 'chat') return;
 
-        const payload = (frame as ChatEventFrame).payload;
+      const payload = (frame as ChatEventFrame).payload;
+      const content = payload?.message?.content?.[0]?.text ?? '';
+      const isFinal = payload?.final === true || payload?.state === 'final';
 
-        console.log(payload.message?.content);
+      this.logger.log(`[stream] chunk="${content}" final=${isFinal}`);
 
-        const content = payload?.message?.content?.[0]?.text ?? '';
-        const isFinal = payload?.final === true || payload?.state === 'final';
+      emit({ content, final: isFinal });
 
-        // ✅ aggregate
-        if (content) {
-          fullResponse += content;
-        }
+      if (isFinal) cleanup();
+    };
 
-        // ✅ log
-        this.logger.log(`[stream] chunk="${content}" final=${isFinal}`);
+    this.messageHandlers.push(handler);
 
-        // ✅ stream outward
-        onChunk(content, isFinal);
+    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
+      '',
+      'main',
+      'assistant',
+    ];
 
-        if (isFinal) {
-          cleanup();
-          resolve(fullResponse);
-        }
-      };
+    const req: ChatRequest = {
+      type: 'req',
+      id: randomUUID(),
+      method: 'chat.send',
+      params: {
+        message,
+        sessionKey: `agent:${agentData[1]}:${agentData[2]}`,
+        idempotencyKey: randomUUID(),
+      },
+    };
 
-      this.messageHandlers.push(handler);
-
-      const req: ChatRequest = {
-        type: 'req',
-        id: randomUUID(),
-        method: 'chat.send',
-        params: {
-          message,
-          sessionKey: 'agent:main:id',
-          idempotencyKey: randomUUID(),
-        },
-      };
-
-      this.send(req);
-    });
+    this.send(req);
+    return true;
   }
 
   private buildConnectRequest(nonce: string): ConnectRequest {
