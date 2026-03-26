@@ -114,19 +114,18 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   // ── Frame handling ─────────────────────────────────────────────────────────
 
   private handleFrame(frame: GatewayFrame): void {
-    if (
-      frame.type === 'res' ||
-      (frame as ChallengeEventFrame).event === 'connect.challenge'
-    ) {
+    if (frame.type === 'res') {
       this.handleConnectionFrame(frame);
-    } else if ((frame as ChatEventFrame).event === 'chat') {
-      this.handleChatFrame(frame as ChatEventFrame);
+    } else if (frame.type === 'event') {
+      const eventName = (frame as { event: string }).event;
+      if (eventName === 'connect.challenge') this.handleConnectionFrame(frame);
+      else if (eventName === 'chat') this.handleChatFrame(frame as unknown as ChatEventFrame);
     }
   }
 
   private handleConnectionFrame(frame: GatewayFrame): void {
-    if ((frame as ChallengeEventFrame).event === 'connect.challenge') {
-      this.handleChallenge((frame as ChallengeEventFrame).payload);
+    if (frame.type === 'event') {
+      this.handleChallenge((frame as unknown as ChallengeEventFrame).payload);
       return;
     }
 
