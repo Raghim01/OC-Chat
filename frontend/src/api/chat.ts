@@ -1,7 +1,10 @@
+import type { ConnectionStatus } from "../types/chat";
+
 interface RawChunk {
-  content: string;
-  final: boolean;
+  content?: string;
+  final?: boolean;
   error?: string;
+  status?: ConnectionStatus;
 }
 
 export interface StreamChunk {
@@ -12,16 +15,15 @@ export interface StreamChunk {
 
 /** Openclaw sends cumulative text — each chunk is the full response so far.
  *  Slices off the already-displayed prefix so callers receive only the delta. */
-function toDelta(raw: RawChunk, prevText: string): string {
-  if (!raw.content) return "";
-  return raw.content.startsWith(prevText)
-    ? raw.content.slice(prevText.length)
-    : raw.content;
+function toDelta(content: string, prevText: string): string {
+  if (!content) return "";
+  return content.startsWith(prevText) ? content.slice(prevText.length) : content;
 }
 
 export function openSession(
   sessionId: string,
   onChunk: (chunk: StreamChunk) => void,
+  onStatus: (status: ConnectionStatus) => void,
   onError: () => void,
 ): () => void {
   let prevText = "";
@@ -31,6 +33,11 @@ export function openSession(
 
   source.onmessage = (e) => {
     const raw = JSON.parse(e.data as string) as RawChunk;
+
+    if (raw.status) {
+      onStatus(raw.status);
+      return;
+    }
 
     if (raw.error) {
       onChunk({ content: "", final: true, error: raw.error });
@@ -44,8 +51,8 @@ export function openSession(
       return;
     }
 
-    const delta = toDelta(raw, prevText);
-    prevText = raw.content;
+    const delta = toDelta(raw.content ?? "", prevText);
+    prevText = raw.content ?? "";
     if (delta) onChunk({ content: delta, final: false });
   };
 
