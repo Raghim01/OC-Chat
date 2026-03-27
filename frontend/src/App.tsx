@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageBubble } from "./components/MessageBubble";
+import { ToastContainer, useToast } from "./components/Toast";
 import type { ChatMessage, ConnectionStatus } from "./types/chat";
 import { ChatInputField } from "./components/Chat/InputField";
 import { openSession, postChat, fetchHistory } from "./api/chat";
@@ -16,6 +17,7 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
+  const { toasts, addToast, removeToast } = useToast();
   const bottomRef = useRef<HTMLDivElement>(null);
   const sessionId = useRef(crypto.randomUUID());
   const currentAiId = useRef<number | null>(null);
@@ -32,13 +34,14 @@ export default function App() {
         if (aiId === null) return;
 
         if (chunk.error) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiId
-                ? { ...m, text: `Error: ${chunk.error}`, streaming: false }
-                : m,
-            ),
-          );
+          addToast(chunk.error);
+          setMessages((prev) => {
+            const aiMsg = prev.find((m) => m.id === aiId);
+            if (!aiMsg?.text) return prev.filter((m) => m.id !== aiId);
+            return prev.map((m) =>
+              m.id === aiId ? { ...m, streaming: false } : m,
+            );
+          });
           currentAiId.current = null;
           setIsStreaming(false);
           return;
@@ -73,26 +76,29 @@ export default function App() {
                 })),
               ),
             )
+            .catch(() => addToast("Could not load chat history."))
             .finally(() => setIsLoadingHistory(false));
         }
       },
       () => {
         const aiId = currentAiId.current;
-        if (aiId === null) return;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === aiId
-              ? { ...m, text: m.text || "Connection failed.", streaming: false }
-              : m,
-          ),
-        );
-        currentAiId.current = null;
-        setIsStreaming(false);
+        addToast("Connection lost. Please try again.");
+        if (aiId !== null) {
+          setMessages((prev) => {
+            const aiMsg = prev.find((m) => m.id === aiId);
+            if (!aiMsg?.text) return prev.filter((m) => m.id !== aiId);
+            return prev.map((m) =>
+              m.id === aiId ? { ...m, streaming: false } : m,
+            );
+          });
+          currentAiId.current = null;
+          setIsStreaming(false);
+        }
       },
     );
 
     return cleanup;
-  }, []);
+  }, [addToast]);
 
   const handleSendMessage = async (text: string) => {
     const aiId = Date.now() + 1;
@@ -108,13 +114,8 @@ export default function App() {
     try {
       await postChat(text, sessionId.current);
     } catch {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === aiId
-            ? { ...m, text: "Could not send message.", streaming: false }
-            : m,
-        ),
-      );
+      addToast("Could not send message. The gateway may be unavailable.");
+      setMessages((prev) => prev.filter((m) => m.id !== aiId));
       currentAiId.current = null;
       setIsStreaming(false);
     }
@@ -145,6 +146,7 @@ export default function App() {
         onSendMessage={handleSendMessage}
         disabled={isStreaming || isLoadingHistory || connectionStatus !== "connected"}
       />
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

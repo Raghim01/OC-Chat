@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import WebSocket from 'ws';
 import { KeyObject, randomUUID } from 'crypto';
@@ -14,6 +15,7 @@ import {
   ChatHistoryRequest,
   ChatRequest,
   ConnectRequest,
+  EventFrame,
   GatewayFrame,
   HelloOkPayload,
   HistoryMessage,
@@ -104,6 +106,7 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
 
     this.ws.on('error', (err) => {
       this.logger.error(`OpenClaw WS error: ${err.message}`);
+      this.emitToAllSessions({ error: `Gateway error: ${err.message}` });
     });
   }
 
@@ -116,7 +119,8 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       const eventName = (frame as { event: string }).event;
 
       if (eventName === 'connect.challenge') this.handleConnectionFrame(frame);
-      else if (eventName === 'chat')
+      if (eventName === 'health') this.handleHealthFrame(frame);
+      if (eventName === 'chat')
         this.handleChatFrame(frame as unknown as ChatEventFrame);
     }
   }
@@ -169,7 +173,21 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private handleHealthFrame(frame: GatewayFrame): void {
+    const ok = (frame as EventFrame).payload.ok;
+    if (!ok) {
+      this.logger.warn('OpenClaw gateway reported unhealthy');
+    }
+  }
+
   private handleChatFrame(frame: ChatEventFrame): void {
+    if (frame.payload?.state === 'error') {
+      const errorMessage = frame.payload.errorMessage ?? 'Unknown error';
+      this.logger.error(`[stream] error: ${errorMessage}`);
+      this.emitToAllSessions({ error: errorMessage, final: true });
+      return;
+    }
+
     const content = frame.payload?.message?.content?.[0]?.text ?? '';
     const isFinal =
       frame.payload?.final === true || frame.payload?.state === 'final';
@@ -194,14 +212,20 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log(`Received challenge nonce: ${nonce}`);
-    this.sendRaw(
-      buildConnectRequest({
-        deviceId: this.deviceId,
-        keyPair: this.keyPair,
-        nonce,
-      }),
-    );
-    this.logger.log('Sent connect request');
+    try {
+      this.sendRaw(
+        buildConnectRequest({
+          deviceId: this.deviceId,
+          keyPair: this.keyPair,
+          nonce,
+        }),
+      );
+      this.logger.log('Sent connect request');
+    } catch (err) {
+      this.logger.error(
+        `Failed to send connect request: ${(err as Error).message}`,
+      );
+    }
   }
 
   private async approveAndReconnect(requestId: string): Promise<void> {
@@ -267,9 +291,8 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getHistory(limit = 50): Promise<HistoryMessage[]> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const id = randomUUID();
-      this.pendingRequests.set(id, resolve);
 
       const req: ChatHistoryRequest = {
         type: 'req',
@@ -277,7 +300,15 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
         method: 'chat.history',
         params: { sessionKey: this.getSessionKey(), limit },
       };
-      this.send(req);
+
+      try {
+        this.send(req);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      this.pendingRequests.set(id, resolve);
     });
   }
 
@@ -285,26 +316,24 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
 
   private send(frame: GatewayFrame): void {
     if (!this.authenticated) {
-      this.logger.error('Cannot send — not yet authenticated with OpenClaw');
-      return;
+      throw new ServiceUnavailableException('OpenClaw not authenticated');
     }
     this.sendRaw(frame);
   }
 
   private sendRaw(frame: GatewayFrame | ConnectRequest): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.error('Cannot send — OpenClaw WS is not open');
-      return;
+      throw new ServiceUnavailableException('OpenClaw WS is not open');
     }
     this.ws.send(JSON.stringify(frame));
   }
 
   private getSessionKey(): string {
-    const agentData = process.env.OPENROUTER_MODEL?.split('/') ?? [
-      '',
-      'main',
-      'assistant',
-    ];
-    return `agent:${agentData[1]}:${agentData[2]}`;
+    const envAgentData = process.env.OPENROUTER_MODEL?.split('/');
+    const sessionKey = envAgentData
+      ? `agent:${envAgentData[1]}:${envAgentData[2]}`
+      : 'agent:main:id';
+
+    return sessionKey;
   }
 }

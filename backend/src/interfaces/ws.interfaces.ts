@@ -85,6 +85,7 @@ export interface HelloOkPayload {
 export interface ChatEventPayload {
   final?: boolean;
   state: string;
+  errorMessage?: string;
   message: { content?: { type: string; text: string }[] };
 }
 
