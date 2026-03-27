@@ -272,9 +272,11 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
 
   private async approveDevice(requestId: string): Promise<string> {
     const container = process.env.OPENCLAW_CONTAINER ?? 'openclaw-gateway';
+
     const { stdout } = await execAsync(
       `docker exec ${container} openclaw devices approve ${requestId}`,
     );
+
     return stdout;
   }
 
@@ -290,7 +292,9 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   registerSession(sessionId: string, emit: (data: object) => void): () => void {
     this.sessions.set(sessionId, emit);
     this.logger.log(`[session] registered sessionId=${sessionId}`);
+
     emit({ status: this.authenticated ? 'connected' : 'connecting' });
+
     return () => {
       this.sessions.delete(sessionId);
       this.logger.log(`[session] unregistered sessionId=${sessionId}`);
@@ -319,23 +323,18 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getHistory(limit = 50): Promise<HistoryMessage[]> {
+    const id = randomUUID();
+
+    const req: ChatHistoryRequest = {
+      type: 'req',
+      id,
+      method: 'chat.history',
+      params: { sessionKey: this.getSessionKey(), limit },
+    };
+
+    this.send(req);
+
     return new Promise((resolve, reject) => {
-      const id = randomUUID();
-
-      const req: ChatHistoryRequest = {
-        type: 'req',
-        id,
-        method: 'chat.history',
-        params: { sessionKey: this.getSessionKey(), limit },
-      };
-
-      try {
-        this.send(req);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-
       this.pendingRequests.set(id, {
         resolve: (data) => resolve((data as ChatHistoryPayload).messages),
         reject,
@@ -344,54 +343,38 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getConfig(): Promise<ConfigPayload> {
+    const id = randomUUID();
+
+    const req: ConfigGetRequest = {
+      type: 'req',
+      id,
+      method: 'config.get',
+      params: {} as Record<string, never>,
+    };
+
+    this.send(req as unknown as GatewayFrame);
+
     return new Promise((resolve, reject) => {
-      const id = randomUUID();
-
-      const req: ConfigGetRequest = {
-        type: 'req',
-        id,
-        method: 'config.get',
-        params: {} as Record<string, never>,
-      };
-
-      try {
-        this.send(req as unknown as GatewayFrame);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-
-      this.pendingRequests.set(id, {
-        resolve: (data) => resolve(data as ConfigPayload),
-        reject,
-      });
+      this.pendingRequests.set(id, { resolve, reject });
     });
   }
 
   async patchConfig(raw: string): Promise<ConfigPayload> {
     const { hash: baseHash } = await this.getConfig();
 
+    const id = randomUUID();
+
+    const req: ConfigPatchRequest = {
+      type: 'req',
+      id,
+      method: 'config.patch',
+      params: { raw, baseHash },
+    };
+
+    this.send(req as unknown as GatewayFrame);
+
     return new Promise((resolve, reject) => {
-      const id = randomUUID();
-
-      const req: ConfigPatchRequest = {
-        type: 'req',
-        id,
-        method: 'config.patch',
-        params: { raw, baseHash },
-      };
-
-      try {
-        this.send(req as unknown as GatewayFrame);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-
-      this.pendingRequests.set(id, {
-        resolve: (data) => resolve(data as ConfigPayload),
-        reject,
-      });
+      this.pendingRequests.set(id, { resolve, reject });
     });
   }
 
