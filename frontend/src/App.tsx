@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageBubble } from "./components/MessageBubble";
 import { ToastContainer, useToast } from "./components/Toast";
+import { Settings } from "./components/Settings";
 import type { ChatMessage, ConnectionStatus } from "./types/chat";
 import { ChatInputField } from "./components/Chat/InputField";
 import { openSession, postChat, fetchHistory } from "./api/chat";
@@ -17,6 +18,7 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const { toasts, addToast, removeToast } = useToast();
   const bottomRef = useRef<HTMLDivElement>(null);
   const sessionId = useRef(crypto.randomUUID());
@@ -125,9 +127,18 @@ export default function App() {
     <div className="chat-layout">
       <header className="chat-header">
         <span className="chat-title">OpenClawChat</span>
-        <div className={`connection-status ${connectionStatus}`}>
-          <span className="connection-dot" />
-          {STATUS_LABEL[connectionStatus]}
+        <div className="chat-header-right">
+          <div className={`connection-status ${connectionStatus}`}>
+            <span className="connection-dot" />
+            {STATUS_LABEL[connectionStatus]}
+          </div>
+          <button
+            className="settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
@@ -147,6 +158,12 @@ export default function App() {
         disabled={isStreaming || isLoadingHistory || connectionStatus !== "connected"}
       />
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <Settings
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSuccess={addToast}
+        onError={addToast}
+      />
     </div>
   );
 }

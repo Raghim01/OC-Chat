@@ -128,3 +128,27 @@ export interface ChatRequestBody {
   message: string;
   sessionId: string;
 }
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+export interface ConfigGetRequest {
+  type: 'req';
+  id: string;
+  method: 'config.get';
+  params: Record<string, never>;
+}
+
+export interface ConfigPatchRequest {
+  type: 'req';
+  id: string;
+  method: 'config.patch';
+  params: {
+    raw: string;
+    baseHash: string;
+  };
+}
+
+export interface ConfigPayload {
+  config: Record<string, unknown>;
+  hash: string;
+}

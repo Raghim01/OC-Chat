@@ -14,6 +14,9 @@ import {
   ChatHistoryPayload,
   ChatHistoryRequest,
   ChatRequest,
+  ConfigGetRequest,
+  ConfigPatchRequest,
+  ConfigPayload,
   ConnectRequest,
   EventFrame,
   GatewayFrame,
@@ -39,7 +42,7 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
   private readonly sessions = new Map<string, (data: object) => void>();
   private readonly pendingRequests = new Map<
     string,
-    (data: HistoryMessage[]) => void
+    { resolve: (data: unknown) => void; reject: (err: Error) => void }
   >();
 
   constructor() {
@@ -101,7 +104,17 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `OpenClaw WS closed [${code}]: ${reason.toString() || '(no reason)'}`,
       );
+
+      this.rejectAllPending('Connection closed');
+
       this.emitToAllSessions({ status: 'connecting' });
+
+      if (!this.destroyed) {
+        this.logger.log('Reconnecting in 3s…');
+        setTimeout(() => {
+          if (!this.destroyed) this.connect();
+        }, 3000);
+      }
     });
 
     this.ws.on('error', (err) => {
@@ -146,9 +159,9 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
 
       const res = frame as ResFrame;
       if (this.pendingRequests.has(res.id)) {
-        const resolve = this.pendingRequests.get(res.id)!;
+        const entry = this.pendingRequests.get(res.id)!;
         this.pendingRequests.delete(res.id);
-        resolve((res.payload as unknown as ChatHistoryPayload).messages);
+        entry.resolve(res.payload);
         return;
       }
 
@@ -157,6 +170,14 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
 
     if ((frame as ResFrame).ok === false) {
       const errFrame = frame as ResFrame;
+
+      if (this.pendingRequests.has(errFrame.id)) {
+        const entry = this.pendingRequests.get(errFrame.id)!;
+        this.pendingRequests.delete(errFrame.id);
+        entry.reject(new Error(errFrame.error?.message ?? 'Request failed'));
+        return;
+      }
+
       if (
         errFrame.error?.code === 'NOT_PAIRED' ||
         errFrame.error?.code === 'PAIRING_REQUIRED'
@@ -200,6 +221,13 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
     for (const emit of this.sessions.values()) {
       emit(data);
     }
+  }
+
+  private rejectAllPending(message: string): void {
+    for (const entry of this.pendingRequests.values()) {
+      entry.reject(new Error(message));
+    }
+    this.pendingRequests.clear();
   }
 
   private handleChallenge(payload: ChallengePayload): void {
@@ -308,7 +336,62 @@ export class OpenClawService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      this.pendingRequests.set(id, resolve);
+      this.pendingRequests.set(id, {
+        resolve: (data) => resolve((data as ChatHistoryPayload).messages),
+        reject,
+      });
+    });
+  }
+
+  async getConfig(): Promise<ConfigPayload> {
+    return new Promise((resolve, reject) => {
+      const id = randomUUID();
+
+      const req: ConfigGetRequest = {
+        type: 'req',
+        id,
+        method: 'config.get',
+        params: {} as Record<string, never>,
+      };
+
+      try {
+        this.send(req as unknown as GatewayFrame);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      this.pendingRequests.set(id, {
+        resolve: (data) => resolve(data as ConfigPayload),
+        reject,
+      });
+    });
+  }
+
+  async patchConfig(raw: string): Promise<ConfigPayload> {
+    const { hash: baseHash } = await this.getConfig();
+
+    return new Promise((resolve, reject) => {
+      const id = randomUUID();
+
+      const req: ConfigPatchRequest = {
+        type: 'req',
+        id,
+        method: 'config.patch',
+        params: { raw, baseHash },
+      };
+
+      try {
+        this.send(req as unknown as GatewayFrame);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      this.pendingRequests.set(id, {
+        resolve: (data) => resolve(data as ConfigPayload),
+        reject,
+      });
     });
   }
 

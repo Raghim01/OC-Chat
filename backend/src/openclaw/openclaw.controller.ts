@@ -5,6 +5,7 @@ import {
   Get,
   Logger,
   NotFoundException,
+  Patch,
   Post,
   Query,
   Sse,
@@ -14,6 +15,7 @@ import { Observable } from 'rxjs';
 import { OpenClawService } from './openclaw.service';
 import type {
   ChatRequestBody,
+  ConfigPayload,
   HistoryMessage,
 } from '../interfaces/ws.interfaces';
 
@@ -50,6 +52,17 @@ export class OpenClawController {
   async getChatHistory(): Promise<{ messages: HistoryMessage[] }> {
     const messages = await this.openClawService.getHistory();
     return { messages };
+  }
+
+  @Get('config')
+  async getConfig(): Promise<ConfigPayload> {
+    return this.openClawService.getConfig();
+  }
+
+  @Patch('config')
+  async patchConfig(@Body() body: { raw: string }): Promise<ConfigPayload> {
+    if (!body.raw) throw new BadRequestException('raw is required');
+    return this.openClawService.patchConfig(body.raw);
   }
 
   @Post('chat')
