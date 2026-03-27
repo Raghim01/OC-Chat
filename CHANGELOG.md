@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-03-27 — Config management & WS resilience
+
+### Added
+
+- `GET /config` and `PATCH /config` endpoints — backend proxies `config.get` / `config.patch` WS requests to OpenClaw (`openclaw.controller.ts`, `openclaw.service.ts`)
+- `config.patch` automatically fetches `baseHash` from `config.get` before sending the patch — prevents concurrent-modification errors (`openclaw.service.ts:patchConfig`)
+- Settings modal in frontend header (gear icon) — displays current config as JSON, accepts a JSON5 partial patch, submits via `PATCH /config` (`Settings.tsx`, `App.tsx`)
+- `frontend/src/api/config.ts` — `fetchConfig()` and `applyConfigPatch()` client functions
+- `ConfigGetRequest`, `ConfigPatchRequest`, `ConfigPayload` types (`ws.interfaces.ts`)
+
+### Fixed
+
+- WS auto-reconnect on gateway restart — `ws.on('close')` schedules `connect()` after 3 s when not shutting down (`openclaw.service.ts:connect`)
+- `ok: false` responses now reject the corresponding pending request immediately instead of hanging (`openclaw.service.ts:handleConnectionFrame`)
+- `rejectAllPending()` drains the pending-request map on WS close so in-flight HTTP calls return 503 instead of timing out (`openclaw.service.ts:rejectAllPending`)
+- `pendingRequests` map changed from `resolve`-only to `{ resolve, reject }` tuples to support rejection paths
+
+---
+
 ## 2026-03-27 — Exception handling & toast notifications
 
 ### Added
